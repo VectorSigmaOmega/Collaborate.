@@ -9,25 +9,15 @@ app.use(cors());
 
 const isProduction = process.env.NODE_ENV === "production";
 
-const allowedOrigins = isProduction 
-    ? (process.env.CLIENT_URL ? process.env.CLIENT_URL.split(",") : []) 
-    : ["http://localhost:5173", "http://localhost:3000"];
-
 const server = http.createServer(app);
 
 const io = new Server(server, {
   cors: {
-    origin: (origin, callback) => {
-      if (!origin) return callback(null, true);
-      if (allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        console.log("Blocked CORS origin:", origin);
-        callback(new Error('Not allowed by CORS'));
-      }
-    },
+    origin: isProduction ? process.env.CLIENT_URL : ["http://localhost:5173", "http://localhost:3000"],
     methods: ["GET", "POST"],
+    credentials: true
   },
+  allowEIO3: true 
 });
 
 let rooms = {}; 
