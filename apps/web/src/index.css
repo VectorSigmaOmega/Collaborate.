@@ -1,0 +1,63 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: light;
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: #f8f9fa;
+  background-image: radial-gradient(#d1d5db 1px, transparent 1px);
+  background-size: 20px 20px;
+  color: #111827;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.btn-primary {
+  @apply w-full rounded-lg border border-black bg-black py-3 font-bold text-white transition-all hover:bg-gray-800 active:scale-[0.98];
+}
+
+.btn-secondary {
+  @apply w-full rounded-lg border-2 border-gray-200 bg-white py-3 font-bold text-black transition-all hover:bg-gray-50 active:scale-[0.98];
+}
+
+.input-field {
+  @apply w-full rounded-lg border-2 border-gray-200 p-3 text-lg transition-colors focus:border-black focus:outline-none;
+}
+
+.surface-panel {
+  @apply border border-gray-200 bg-white shadow-xl;
+}
+
+.icon-button {
+  @apply inline-flex h-10 w-10 items-center justify-center rounded-full text-gray-600 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:text-gray-300;
+}
+
+.icon-button-destructive {
+  @apply text-red-500 hover:bg-red-50;
+}
+
+.toolbar-divider {
+  @apply h-6 border-l border-gray-300;
+}
+
+.swatch-button {
+  @apply h-7 w-7 rounded-full border-2 border-white shadow transition-transform hover:scale-110;
+}
+
+.swatch-button-active {
+  @apply ring-2 ring-black ring-offset-2 ring-offset-white;
+}

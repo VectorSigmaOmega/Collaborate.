@@ -1,0 +1,20 @@
+{
+  "name": "@collaborate/api",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Production backend for Collaborate.",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "eslint src --ext .ts",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@collaborate/contracts": "0.1.0",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "socket.io": "^4.8.3"
+  }
+}

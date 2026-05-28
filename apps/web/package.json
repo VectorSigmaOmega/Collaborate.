@@ -1,0 +1,29 @@
+{
+  "name": "@collaborate/web",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Production frontend for Collaborate.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "lint": "eslint src --ext .ts,.tsx",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@collaborate/contracts": "0.1.0",
+    "@tailwindcss/vite": "^4.1.18",
+    "lucide-react": "^0.575.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-router-dom": "^7.13.0",
+    "socket.io-client": "^4.8.3"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.2",
+    "vite": "^8.0.14"
+  }
+}
