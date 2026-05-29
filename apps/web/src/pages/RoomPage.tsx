@@ -2,7 +2,7 @@ import { ArrowLeft } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
-import type { BoardTool, Participant } from "@collaborate/contracts";
+import { MAX_DISPLAY_NAME_LENGTH, type BoardTool, type Participant } from "@collaborate/contracts";
 
 import { CopyButton } from "../components/CopyButton";
 import { PresencePanel } from "../components/PresencePanel";
@@ -33,11 +33,15 @@ type EditableTextDraft = TextDraft & {
   value: string;
 };
 
+function sanitizeDisplayName(value: string) {
+  return value.slice(0, MAX_DISPLAY_NAME_LENGTH);
+}
+
 export function RoomPage() {
   const { roomId = "" } = useParams();
   const navigate = useNavigate();
   const clientId = useMemo(() => getOrCreateClientId(), []);
-  const [displayName, setDisplayName] = useState(() => getStoredDisplayName());
+  const [displayName, setDisplayName] = useState(() => sanitizeDisplayName(getStoredDisplayName()));
   const [strokeWidth, setStrokeWidth] = useState(DEFAULT_STROKE_WIDTH);
   const [activeTool, setActiveTool] = useState<BoardTool>("pen");
   const [inputError, setInputError] = useState(false);
@@ -46,6 +50,7 @@ export function RoomPage() {
   const autoJoinAttemptedRef = useRef(false);
 
   const session = useRoomSession(roomId);
+  const normalizedDisplayName = displayName.trim();
 
   useEffect(() => {
     autoJoinAttemptedRef.current = false;
@@ -104,7 +109,7 @@ export function RoomPage() {
       session.joining ||
       session.expired ||
       getStoredActiveRoomId() !== roomId ||
-      !displayName.trim()
+      !normalizedDisplayName
     ) {
       return;
     }
@@ -112,13 +117,13 @@ export function RoomPage() {
     autoJoinAttemptedRef.current = true;
     session.joinRoom({
       clientId,
-      displayName: displayName.trim(),
+      displayName: normalizedDisplayName,
       preferredColor: lobbyPreview?.suggestedColor
     });
   }, [
     clientId,
-    displayName,
     lobbyPreview?.suggestedColor,
+    normalizedDisplayName,
     roomId,
     session,
     session.expired,
@@ -171,16 +176,19 @@ export function RoomPage() {
   };
 
   const handleJoin = () => {
-    if (!displayName.trim()) {
+    const nextDisplayName = sanitizeDisplayName(displayName).trim();
+
+    if (!nextDisplayName) {
       setInputError(true);
       window.setTimeout(() => setInputError(false), 200);
       return;
     }
 
-    storeDisplayName(displayName.trim());
+    setDisplayName(nextDisplayName);
+    storeDisplayName(nextDisplayName);
     session.joinRoom({
       clientId,
-      displayName: displayName.trim(),
+      displayName: nextDisplayName,
       preferredColor: lobbyPreview?.suggestedColor
     });
   };
@@ -225,7 +233,7 @@ export function RoomPage() {
               className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-full border-4 border-white font-mono text-2xl font-bold uppercase text-white shadow-inner ring-1 ring-gray-200"
               style={{ backgroundColor: assignedColor }}
             >
-              {displayName.trim().slice(0, 1) || "?"}
+              {normalizedDisplayName.slice(0, 1) || "?"}
             </div>
             <p className="text-xs font-semibold uppercase tracking-[0.22em] text-gray-400">
               Assigned Color
@@ -236,13 +244,14 @@ export function RoomPage() {
             <input
               type="text"
               value={displayName}
-              onChange={(event) => setDisplayName(event.target.value)}
+              onChange={(event) => setDisplayName(sanitizeDisplayName(event.target.value))}
               onKeyDown={(event) => event.key === "Enter" && handleJoin()}
               placeholder="Enter your name"
+              maxLength={MAX_DISPLAY_NAME_LENGTH}
               className={`input-field text-center text-sm font-mono ${
                 inputError ? "border-black ring-1 ring-black" : ""
               } ${
-                session.error?.code === "DUPLICATE_NAME"
+                session.error?.code === "DUPLICATE_NAME" || session.error?.code === "INVALID_PAYLOAD"
                   ? "border-red-500 text-red-500 ring-2 ring-red-500"
                   : ""
               }`}
@@ -287,7 +296,6 @@ export function RoomPage() {
         participants={snapshot.participants}
         roomId={snapshot.roomId}
         selfClientId={clientId}
-        status={session.status}
       />
 
       <canvas
@@ -332,10 +340,6 @@ export function RoomPage() {
           />
         </form>
       ) : null}
-
-      <div className="fixed bottom-4 left-1/2 z-40 -translate-x-1/2 rounded-full bg-white/90 px-4 py-2 text-xs font-bold uppercase tracking-[0.18em] text-gray-400 shadow">
-        {snapshot.items.length} Items
-      </div>
 
       {session.status === "reconnecting" ? (
         <div className="surface-panel fixed bottom-4 right-4 z-50 rounded-full px-4 py-2 text-sm text-gray-500">

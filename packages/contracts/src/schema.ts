@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export const MAX_DISPLAY_NAME_LENGTH = 20;
+
 const colorSchema = z
   .string()
   .min(1)
@@ -29,15 +31,19 @@ export const boardToolSchema = z.enum([
 export const strokeInputSchema = z.object({
   kind: z.literal("stroke"),
   id: z.string().min(1).max(64),
+  actionId: z.string().min(1).max(64).optional(),
   tool: strokeToolSchema,
   color: colorSchema,
   width: z.number().int().min(1).max(32),
-  points: z.array(pointSchema).min(1).max(1200)
+  points: z.array(pointSchema).min(1).max(1200),
+  maskForItemId: z.string().min(1).max(64).optional(),
+  anchor: pointSchema.optional()
 });
 
 export const shapeInputSchema = z.object({
   kind: z.literal("shape"),
   id: z.string().min(1).max(64),
+  actionId: z.string().min(1).max(64).optional(),
   shape: shapeToolSchema,
   color: colorSchema,
   width: z.number().int().min(1).max(32),
@@ -48,6 +54,7 @@ export const shapeInputSchema = z.object({
 export const textInputSchema = z.object({
   kind: z.literal("text"),
   id: z.string().min(1).max(64),
+  actionId: z.string().min(1).max(64).optional(),
   color: colorSchema,
   x: z.number().finite(),
   y: z.number().finite(),
@@ -61,9 +68,18 @@ export const boardItemInputSchema = z.discriminatedUnion("kind", [
   textInputSchema
 ]);
 
+const displayNameSchema = z
+  .string()
+  .trim()
+  .min(1, "Display name is required.")
+  .max(
+    MAX_DISPLAY_NAME_LENGTH,
+    `Display name must be ${MAX_DISPLAY_NAME_LENGTH} characters or fewer.`
+  );
+
 export const participantSchema = z.object({
   clientId: z.string().min(1).max(64),
-  displayName: z.string().min(1).max(32),
+  displayName: displayNameSchema,
   color: colorSchema,
   connected: z.boolean()
 });
@@ -76,7 +92,7 @@ export const roomJoinPayloadSchema = z.object({
     .max(128)
     .regex(/^[a-zA-Z0-9-]+$/, "Room IDs must be URL-safe"),
   clientId: z.string().min(1).max(64),
-  displayName: z.string().trim().min(1).max(32),
+  displayName: displayNameSchema,
   preferredColor: colorSchema.optional()
 });
 

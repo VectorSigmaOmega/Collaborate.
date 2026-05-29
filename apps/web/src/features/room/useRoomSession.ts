@@ -253,27 +253,29 @@ export function useRoomSession(roomId: string) {
 
     previewMapRef.current.delete(item.id);
     setPreviewItems([...previewMapRef.current.values()]);
-    setState((current) => {
-      if (!current.snapshot || !joinRequestRef.current) {
-        return current;
-      }
-
-      return {
-        ...current,
-        snapshot: {
-          ...current.snapshot,
-          items: [
-            ...current.snapshot.items,
-            {
-              ...item,
-              clientId: joinRequestRef.current.clientId
-            } as BoardItem
-          ],
-          canUndo: true,
-          canRedo: false
+    if (!(item.kind === "stroke" && item.tool === "eraser")) {
+      setState((current) => {
+        if (!current.snapshot || !joinRequestRef.current) {
+          return current;
         }
-      };
-    });
+
+        return {
+          ...current,
+          snapshot: {
+            ...current.snapshot,
+            items: [
+              ...current.snapshot.items,
+              {
+                ...item,
+                clientId: joinRequestRef.current.clientId
+              } as BoardItem
+            ],
+            canUndo: true,
+            canRedo: false
+          }
+        };
+      });
+    }
     socket.emit(CLIENT_EVENTS.itemCommit, item);
   };
 

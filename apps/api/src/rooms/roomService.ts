@@ -8,10 +8,15 @@ import type {
   RoomErrorCode,
   RoomJoinPayload,
 } from "../contracts.js";
-import { translateBoardItem } from "../contracts.js";
+import {
+  getApproxBoardItemBounds,
+  getBoardItemAnchor,
+  translateBoardItem,
+  type BoardItemBounds
+} from "../contracts.js";
 
 import type { AppConfig } from "../config/env.js";
-import type { RoomRecord, RoomRepository } from "./roomRepository.js";
+import type { RoomAction, RoomRecord, RoomRepository } from "./roomRepository.js";
 
 export class RoomServiceError extends Error {
   constructor(
@@ -66,6 +71,13 @@ type RgbColor = {
   blue: number;
 };
 
+type CommitItemResult = {
+  replaced: boolean;
+  item?: BoardItem;
+  items?: BoardItem[];
+  capabilities: BoardCapabilities;
+};
+
 const NAMED_IDENTITY_COLORS: Record<string, RgbColor> = {
   black: { red: 0, green: 0, blue: 0 },
   white: { red: 255, green: 255, blue: 255 }
@@ -94,6 +106,7 @@ export class RoomService {
         expiresAt: null,
         participants: {},
         items: [],
+        undoByClientId: {},
         redoByClientId: {}
       };
     }
@@ -157,6 +170,7 @@ export class RoomService {
         expiresAt: null,
         participants: {},
         items: [],
+        undoByClientId: {},
         redoByClientId: {}
       } satisfies RoomRecord);
     const connectedParticipants = this.getConnectedParticipants(previewRoom);
@@ -210,7 +224,7 @@ export class RoomService {
     return this.asCommittedItem(clientId, item);
   }
 
-  async commitItem(roomId: string, clientId: string, item: BoardItemInput) {
+  async commitItem(roomId: string, clientId: string, item: BoardItemInput): Promise<CommitItemResult> {
     const room = await this.requireAuthorizedRoom(roomId, clientId);
     this.assertItemLimits(item);
 
@@ -218,9 +232,39 @@ export class RoomService {
       throw new RoomServiceError("INVALID_PAYLOAD", "Committed strokes need at least two points.");
     }
 
-    const committedItem = this.asCommittedItem(clientId, item);
+    if (item.kind === "stroke" && item.tool === "eraser") {
+      const eraserAttachments = this.createEraserAttachments(room.items, clientId, {
+        ...item,
+        tool: "eraser"
+      });
+      if (eraserAttachments.length > 0) {
+        room.items.push(...eraserAttachments);
+        this.pushUndoAction(room, clientId, {
+          type: "append",
+          items: eraserAttachments
+        });
+      }
+
+      if (room.items.length > this.config.ROOM_MAX_STROKES) {
+        room.items = room.items.slice(-this.config.ROOM_MAX_STROKES);
+      }
+      room.updatedAt = Date.now();
+      room.participants[clientId].lastSeenAt = room.updatedAt;
+      await this.repository.saveRoom(room);
+
+      return {
+        items: room.items,
+        capabilities: this.getCapabilities(room, clientId),
+        replaced: true
+      };
+    }
+
+    const committedItem = this.asCommittedItem(clientId, item, item.id);
     room.items.push(committedItem);
-    room.redoByClientId[clientId] = [];
+    this.pushUndoAction(room, clientId, {
+      type: "append",
+      items: [committedItem]
+    });
 
     if (room.items.length > this.config.ROOM_MAX_STROKES) {
       room.items = room.items.slice(-this.config.ROOM_MAX_STROKES);
@@ -252,7 +296,14 @@ export class RoomService {
       throw new RoomServiceError("INVALID_PAYLOAD", "Eraser marks cannot be moved.");
     }
 
-    room.items[itemIndex] = translateBoardItem(room.items[itemIndex], payload.delta);
+    const before = room.items[itemIndex];
+    const after = translateBoardItem(before, payload.delta);
+    room.items[itemIndex] = after;
+    this.pushUndoAction(room, clientId, {
+      type: "move",
+      before,
+      after
+    });
     room.updatedAt = Date.now();
     room.participants[clientId].lastSeenAt = room.updatedAt;
     await this.repository.saveRoom(room);
@@ -262,34 +313,33 @@ export class RoomService {
 
   async undo(roomId: string, clientId: string) {
     const room = await this.requireAuthorizedRoom(roomId, clientId);
-    const lastIndex = [...room.items]
-      .map((item, index) => ({ item, index }))
-      .reverse()
-      .find((entry) => entry.item.clientId === clientId)?.index;
+    const undoStack = room.undoByClientId[clientId] ?? [];
+    const action = undoStack.pop();
 
-    if (lastIndex === undefined) {
+    if (action) {
+      this.revertAction(room, action);
+      room.undoByClientId[clientId] = undoStack;
+      room.redoByClientId[clientId] = [...(room.redoByClientId[clientId] ?? []), action];
+      room.updatedAt = Date.now();
+      await this.repository.saveRoom(room);
       return this.toSnapshot(room, clientId);
     }
 
-    const [removedItem] = room.items.splice(lastIndex, 1);
-    room.redoByClientId[clientId] = [...(room.redoByClientId[clientId] ?? []), removedItem];
-    room.updatedAt = Date.now();
-    await this.repository.saveRoom(room);
-
-    return this.toSnapshot(room, clientId);
+    return this.undoLegacyAppend(room, clientId);
   }
 
   async redo(roomId: string, clientId: string) {
     const room = await this.requireAuthorizedRoom(roomId, clientId);
     const redoStack = room.redoByClientId[clientId] ?? [];
-    const restoredItem = redoStack.pop();
+    const action = redoStack.pop();
 
-    if (!restoredItem) {
+    if (!action) {
       return this.toSnapshot(room, clientId);
     }
 
-    room.items.push(restoredItem);
+    this.applyAction(room, action);
     room.redoByClientId[clientId] = redoStack;
+    room.undoByClientId[clientId] = [...(room.undoByClientId[clientId] ?? []), action];
     room.updatedAt = Date.now();
     await this.repository.saveRoom(room);
 
@@ -299,6 +349,7 @@ export class RoomService {
   async clearMine(roomId: string, clientId: string) {
     const room = await this.requireAuthorizedRoom(roomId, clientId);
     room.items = room.items.filter((item) => item.clientId !== clientId);
+    room.undoByClientId[clientId] = [];
     room.redoByClientId[clientId] = [];
     room.updatedAt = Date.now();
     await this.repository.saveRoom(room);
@@ -365,7 +416,9 @@ export class RoomService {
       participants: this.getConnectedParticipants(room).map((participant) =>
         this.toParticipant(participant)
       ),
-      canUndo: room.items.some((item) => item.clientId === clientId),
+      canUndo:
+        (room.undoByClientId[clientId] ?? []).length > 0 ||
+        room.items.some((item) => item.clientId === clientId),
       canRedo: (room.redoByClientId[clientId] ?? []).length > 0,
       expiresAt: room.expiresAt
     };
@@ -373,14 +426,17 @@ export class RoomService {
 
   private getCapabilities(room: RoomRecord, clientId: string): BoardCapabilities {
     return {
-      canUndo: room.items.some((item) => item.clientId === clientId),
+      canUndo:
+        (room.undoByClientId[clientId] ?? []).length > 0 ||
+        room.items.some((item) => item.clientId === clientId),
       canRedo: (room.redoByClientId[clientId] ?? []).length > 0
     };
   }
 
-  private asCommittedItem(clientId: string, item: BoardItemInput): BoardItem {
+  private asCommittedItem(clientId: string, item: BoardItemInput, actionId?: string): BoardItem {
     return {
       ...item,
+      actionId: actionId ?? item.actionId,
       clientId
     } as BoardItem;
   }
@@ -393,6 +449,109 @@ export class RoomService {
 
   private isMovableItem(item: BoardItem) {
     return !(item.kind === "stroke" && item.tool === "eraser");
+  }
+
+  private pushUndoAction(room: RoomRecord, clientId: string, action: RoomAction) {
+    room.undoByClientId[clientId] = [...(room.undoByClientId[clientId] ?? []), action];
+    room.redoByClientId[clientId] = [];
+  }
+
+  private applyAction(room: RoomRecord, action: RoomAction) {
+    if (action.type === "append") {
+      room.items.push(...action.items);
+      return;
+    }
+
+    const itemIndex = room.items.findIndex((item) => item.id === action.after.id);
+    if (itemIndex >= 0) {
+      room.items[itemIndex] = action.after;
+    }
+  }
+
+  private revertAction(room: RoomRecord, action: RoomAction) {
+    if (action.type === "append") {
+      const itemIds = new Set(action.items.map((item) => item.id));
+      room.items = room.items.filter((item) => !itemIds.has(item.id));
+      return;
+    }
+
+    const itemIndex = room.items.findIndex((item) => item.id === action.before.id);
+    if (itemIndex >= 0) {
+      room.items[itemIndex] = action.before;
+    }
+  }
+
+  private async undoLegacyAppend(room: RoomRecord, clientId: string) {
+    const lastItem = [...room.items]
+      .reverse()
+      .find((item) => item.clientId === clientId);
+    const lastActionId = lastItem ? this.getActionId(lastItem) : null;
+
+    if (!lastActionId) {
+      return this.toSnapshot(room, clientId);
+    }
+
+    const removedItems = room.items.filter(
+      (item) => item.clientId === clientId && this.getActionId(item) === lastActionId
+    );
+    room.items = room.items.filter(
+      (item) => item.clientId !== clientId || this.getActionId(item) !== lastActionId
+    );
+    room.redoByClientId[clientId] = [
+      ...(room.redoByClientId[clientId] ?? []),
+      {
+        type: "append",
+        items: removedItems
+      }
+    ];
+    room.updatedAt = Date.now();
+    await this.repository.saveRoom(room);
+
+    return this.toSnapshot(room, clientId);
+  }
+
+  private getActionId(item: BoardItem) {
+    return item.actionId ?? item.id;
+  }
+
+  private createEraserAttachments(
+    items: BoardItem[],
+    clientId: string,
+    eraser: Extract<BoardItemInput, { kind: "stroke" }> & { tool: "eraser" }
+  ) {
+    const eraserBounds = getApproxBoardItemBounds(eraser);
+    const targets = items.filter(
+      (item) => !(item.kind === "stroke" && item.tool === "eraser") && this.boundsIntersect(eraserBounds, getApproxBoardItemBounds(item))
+    );
+
+    return targets.map((target, index) =>
+      this.asCommittedItem(
+        clientId,
+        {
+          ...eraser,
+          id: this.buildAttachmentId(eraser.id, index),
+          maskForItemId: target.id,
+          anchor: getBoardItemAnchor(target),
+          actionId: eraser.id
+        },
+        eraser.id
+      )
+    );
+  }
+
+  private buildAttachmentId(actionId: string, index: number) {
+    const suffix = `-${index.toString(36)}`;
+    const maxBaseLength = Math.max(1, 64 - suffix.length);
+    return `${actionId.slice(0, maxBaseLength)}${suffix}`;
+  }
+
+  private boundsIntersect(left: BoardItemBounds, right: BoardItemBounds) {
+    return !(
+      left.maxX < right.minX ||
+      left.minX > right.maxX ||
+      left.maxY < right.minY ||
+      left.minY > right.maxY
+    );
   }
 
   private getSafeExistingParticipantColor(

@@ -125,6 +125,11 @@ export function registerSocketHandlers(
             return;
           }
 
+          if (error instanceof z.ZodError) {
+            reject(eventName, "INVALID_PAYLOAD", error.issues[0]?.message ?? "Invalid payload.");
+            return;
+          }
+
           logger.error({ err: error, eventName }, "Socket handler failed");
           metrics.incSocketErrors();
           reject(eventName, "UNKNOWN", "Unexpected server error.");
@@ -194,7 +199,11 @@ export function registerSocketHandlers(
       guardedHandler(CLIENT_EVENTS.itemCommit, boardItemInputSchema, async (payload) => {
         const { roomId, clientId } = ensureJoined();
         const result = await roomService.commitItem(roomId, clientId, payload);
-        socket.to(roomId).emit(SERVER_EVENTS.itemCommitted, result.item);
+        if (result.replaced) {
+          io.to(roomId).emit(SERVER_EVENTS.boardReplaced, result.items ?? []);
+        } else {
+          socket.to(roomId).emit(SERVER_EVENTS.itemCommitted, result.item!);
+        }
         socket.emit(SERVER_EVENTS.boardCapabilities, result.capabilities);
       })
     );

@@ -58,8 +58,8 @@ export function Toolbar({
   onLeave
 }: ToolbarProps) {
   return (
-    <div className="surface-panel fixed left-1/2 top-4 z-50 flex max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-3 overflow-x-auto rounded-full px-5 py-2">
-      <div className="flex items-center gap-2">
+    <div className="surface-panel fixed left-1/2 top-4 z-50 flex max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-1.5 overflow-x-auto rounded-full px-3.5 py-1">
+      <div className="flex items-center gap-0.5">
         {tools.map(({ tool, title, icon: Icon }) => (
           <button
             key={tool}
@@ -84,7 +84,7 @@ export function Toolbar({
         value={activeWidth}
         onChange={(event) => onWidthChange(Number(event.target.value))}
         title="Stroke width"
-        className="w-24 shrink-0 accent-black"
+        className="w-20 shrink-0 accent-black"
       />
 
       <span className="toolbar-divider" />

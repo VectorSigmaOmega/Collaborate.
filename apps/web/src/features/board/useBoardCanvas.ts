@@ -187,11 +187,10 @@ export function useBoardCanvas({
       return null;
     }
 
-    if (selectedItem.kind === "stroke" || selectedItem.kind === "text") {
-      return pointInExpandedBoardItemBounds(context, selectedItem, point, 12) ? selectedItem : null;
-    }
-
-    return hitTestBoardItem(context, selectedItem, point) ? selectedItem : null;
+    const dragPadding = selectedItem.kind === "shape" ? 6 : 12;
+    return pointInExpandedBoardItemBounds(context, selectedItem, point, dragPadding)
+      ? selectedItem
+      : null;
   };
 
   const toInputItem = (item: DraftItem): BoardItemInput => {
@@ -397,7 +396,7 @@ export function useBoardCanvas({
 
       if (shouldCommit) {
         onCommitItem(toInputItem(draftItem));
-        setSelectedItemId(draftItem.id);
+        setSelectedItemId(isSelectableItem(draftItem) ? draftItem.id : null);
       }
     }
 

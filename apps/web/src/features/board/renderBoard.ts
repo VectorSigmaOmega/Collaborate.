@@ -1,6 +1,12 @@
-import type { BoardItem, BoardItemInput, Point } from "@collaborate/contracts";
+import { getBoardItemAnchor, type BoardItem, type BoardItemInput, type Point } from "@collaborate/contracts";
 
 type RenderItem = BoardItem | (BoardItemInput & { clientId: string });
+type StrokeRenderItem = Extract<RenderItem, { kind: "stroke" }>;
+type EraserRenderItem = StrokeRenderItem & {
+  tool: "eraser";
+  maskForItemId?: string;
+  anchor?: Point;
+};
 
 type Bounds = {
   minX: number;
@@ -320,6 +326,59 @@ export function hitTestBoardItem(ctx: CanvasRenderingContext2D, item: RenderItem
   return pointInBounds(point, expandBounds(getBoardItemBounds(ctx, item), 6));
 }
 
+function isEraserStroke(
+  item: RenderItem | null | undefined
+): item is EraserRenderItem {
+  return Boolean(item && item.kind === "stroke" && item.tool === "eraser");
+}
+
+function isAttachedEraserStroke(
+  item: RenderItem | null | undefined
+): item is EraserRenderItem {
+  return isEraserStroke(item) && Boolean(item.maskForItemId);
+}
+
+function translateStrokePoints<T extends StrokeRenderItem>(item: T, delta: Point): T {
+  return {
+    ...item,
+    points: item.points.map((point) => ({
+      x: point.x + delta.x,
+      y: point.y + delta.y
+    }))
+  };
+}
+
+function alignAttachedEraserToTarget(
+  item: RenderItem,
+  eraser: EraserRenderItem
+) {
+  if (!eraser.anchor) {
+    return eraser;
+  }
+
+  const currentAnchor = getBoardItemAnchor(item);
+  return translateStrokePoints(eraser, {
+    x: currentAnchor.x - eraser.anchor.x,
+    y: currentAnchor.y - eraser.anchor.y
+  });
+}
+
+function createScratchContext(ctx: CanvasRenderingContext2D, width: number) {
+  const scratchCanvas =
+    ctx.canvas.ownerDocument?.createElement("canvas") ?? document.createElement("canvas");
+  scratchCanvas.width = ctx.canvas.width;
+  scratchCanvas.height = ctx.canvas.height;
+
+  const scratchContext = scratchCanvas.getContext("2d");
+  if (!scratchContext) {
+    return null;
+  }
+
+  const pixelRatio = ctx.canvas.width / width;
+  scratchContext.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+  return { scratchCanvas, scratchContext };
+}
+
 export function renderBoardScene(
   ctx: CanvasRenderingContext2D,
   width: number,
@@ -338,16 +397,49 @@ export function renderBoardScene(
     drawGrid(ctx, width, height);
   }
 
+  const allItems = [...items, ...previewItems, ...(draftItem ? [draftItem] : [])];
+  const attachedErasersByTargetId = new Map<string, EraserRenderItem[]>();
+
   for (const item of items) {
-    drawItem(ctx, item);
+    if (!isAttachedEraserStroke(item)) {
+      continue;
+    }
+
+    const targetId = item.maskForItemId!;
+    attachedErasersByTargetId.set(targetId, [
+      ...(attachedErasersByTargetId.get(targetId) ?? []),
+      item
+    ]);
   }
 
-  for (const item of previewItems) {
-    drawItem(ctx, item);
-  }
+  const globalErasers = allItems.filter(
+    (item) => isEraserStroke(item) && !item.maskForItemId
+  ) as EraserRenderItem[];
+  const visibleItems = allItems.filter((item) => !isEraserStroke(item));
+  const scratch = createScratchContext(ctx, width);
 
-  if (draftItem) {
-    drawItem(ctx, draftItem);
+  if (scratch) {
+    for (const item of visibleItems) {
+      scratch.scratchContext.clearRect(0, 0, width, height);
+      drawItem(scratch.scratchContext, item);
+
+      for (const eraser of attachedErasersByTargetId.get(item.id) ?? []) {
+        drawStroke(scratch.scratchContext, alignAttachedEraserToTarget(item, eraser));
+      }
+
+      for (const eraser of globalErasers) {
+        drawStroke(scratch.scratchContext, eraser);
+      }
+
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.drawImage(scratch.scratchCanvas, 0, 0);
+      ctx.restore();
+    }
+  } else {
+    for (const item of visibleItems) {
+      drawItem(ctx, item);
+    }
   }
 
   const selectedItem = [...items, draftItem].find((item) => item?.id === selectedItemId);

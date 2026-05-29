@@ -147,7 +147,7 @@ describe("RoomService", () => {
       ]
     });
 
-    expect(commitResult.item.color).toBe("#111111");
+    expect(commitResult.item?.color).toBe("#111111");
 
     const undone = await roomService.undo("demo-room", "client-1");
     expect(undone.items).toHaveLength(0);
@@ -158,7 +158,7 @@ describe("RoomService", () => {
     expect(redone.canUndo).toBe(true);
   });
 
-  it("commits and moves shape and text items", async () => {
+  it("commits, moves, undoes, and redoes shape and text items", async () => {
     await roomService.joinRoom({
       roomId: "demo-room",
       clientId: "client-1",
@@ -196,15 +196,100 @@ describe("RoomService", () => {
       x: 18,
       y: 10
     });
+
+    const undone = await roomService.undo("demo-room", "client-1");
+    expect(undone.items.find((item) => item.id === "text-1")).toMatchObject({
+      x: 10,
+      y: 12
+    });
+    expect(undone.canRedo).toBe(true);
+
+    const redone = await roomService.redo("demo-room", "client-1");
+    expect(redone.items.find((item) => item.id === "text-1")).toMatchObject({
+      x: 18,
+      y: 10
+    });
   });
 
-  it("does not allow eraser marks to be moved", async () => {
+  it("creates grouped eraser attachments for every intersected item", async () => {
     await roomService.joinRoom({
       roomId: "demo-room",
       clientId: "client-1",
       displayName: "Ada",
       preferredColor: "#111111",
       socketId: "socket-1"
+    });
+
+    await roomService.commitItem("demo-room", "client-1", {
+      kind: "stroke",
+      id: "stroke-1",
+      tool: "pen",
+      color: "#111111",
+      width: 6,
+      points: [
+        { x: 0, y: 10 },
+        { x: 40, y: 10 }
+      ]
+    });
+
+    await roomService.commitItem("demo-room", "client-1", {
+      kind: "shape",
+      id: "shape-1",
+      shape: "rectangle",
+      color: "#111111",
+      width: 4,
+      start: { x: 10, y: 0 },
+      end: { x: 30, y: 20 }
+    });
+
+    await roomService.commitItem("demo-room", "client-1", {
+      kind: "stroke",
+      id: "erase-action",
+      tool: "eraser",
+      color: "#111111",
+      width: 10,
+      points: [
+        { x: 20, y: -10 },
+        { x: 20, y: 30 }
+      ]
+    });
+
+    const snapshot = await roomService.resync("demo-room", "client-1");
+    const eraserAttachments = snapshot.items.filter(
+      (item) => item.kind === "stroke" && item.tool === "eraser"
+    );
+
+    expect(eraserAttachments).toHaveLength(2);
+    expect(eraserAttachments.every((item) => item.actionId === "erase-action")).toBe(true);
+    expect(eraserAttachments.map((item) => item.maskForItemId).sort()).toEqual(["shape-1", "stroke-1"]);
+
+    const undone = await roomService.undo("demo-room", "client-1");
+    expect(undone.items.filter((item) => item.kind === "stroke" && item.tool === "eraser")).toHaveLength(0);
+    expect(undone.canRedo).toBe(true);
+
+    const redone = await roomService.redo("demo-room", "client-1");
+    expect(redone.items.filter((item) => item.kind === "stroke" && item.tool === "eraser")).toHaveLength(2);
+  });
+
+  it("does not allow eraser attachments to be moved", async () => {
+    await roomService.joinRoom({
+      roomId: "demo-room",
+      clientId: "client-1",
+      displayName: "Ada",
+      preferredColor: "#111111",
+      socketId: "socket-1"
+    });
+
+    await roomService.commitItem("demo-room", "client-1", {
+      kind: "stroke",
+      id: "stroke-1",
+      tool: "pen",
+      color: "#111111",
+      width: 4,
+      points: [
+        { x: 0, y: 0 },
+        { x: 20, y: 20 }
+      ]
     });
 
     await roomService.commitItem("demo-room", "client-1", {
@@ -221,7 +306,7 @@ describe("RoomService", () => {
 
     await expect(
       roomService.moveItem("demo-room", "client-1", {
-        id: "eraser-1",
+        id: "eraser-1-0",
         delta: { x: 8, y: 4 }
       })
     ).rejects.toMatchObject({

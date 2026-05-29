@@ -43,7 +43,7 @@ input {
 }
 
 .icon-button {
-  @apply inline-flex h-10 w-10 items-center justify-center rounded-full text-gray-600 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:text-gray-300;
+  @apply inline-flex h-9 w-9 items-center justify-center rounded-full text-gray-600 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:text-gray-300;
 }
 
 .icon-button-destructive {
@@ -51,7 +51,7 @@ input {
 }
 
 .toolbar-divider {
-  @apply h-6 border-l border-gray-300;
+  @apply h-4 border-l border-gray-300;
 }
 
 .swatch-button {

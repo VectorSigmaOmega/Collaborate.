@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { roomJoinPayloadSchema, strokeInputSchema } from "./schema.js";
+import {
+  MAX_DISPLAY_NAME_LENGTH,
+  roomJoinPayloadSchema,
+  strokeInputSchema
+} from "./schema.js";
 
 describe("contracts", () => {
   it("accepts a valid room join payload", () => {
@@ -24,5 +28,15 @@ describe("contracts", () => {
         points: [{ x: 0, y: 0 }]
       })
     ).toThrow();
+  });
+
+  it("rejects display names longer than the shared limit", () => {
+    expect(() =>
+      roomJoinPayloadSchema.parse({
+        roomId: "demo-room",
+        clientId: "client-1",
+        displayName: "A".repeat(MAX_DISPLAY_NAME_LENGTH + 1)
+      })
+    ).toThrow(`Display name must be ${MAX_DISPLAY_NAME_LENGTH} characters or fewer.`);
   });
 });

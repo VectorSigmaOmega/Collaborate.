@@ -5,7 +5,7 @@ import type pino from "pino";
 import { z } from "zod";
 
 import { boardItemSchema, boardStrokeSchema, participantSchema } from "../contracts.js";
-import type { RoomRecord, RoomRepository } from "./roomRepository.js";
+import type { RoomAction, RoomRecord, RoomRepository } from "./roomRepository.js";
 
 const participantRecordSchema = participantSchema.extend({
   socketId: z.string().min(1).max(128),
@@ -18,30 +18,89 @@ const legacyBoardStrokeSchema = boardStrokeSchema.omit({ kind: true }).transform
 }));
 
 const persistedBoardItemSchema = z.union([boardItemSchema, legacyBoardStrokeSchema]);
+const roomActionSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("append"),
+    items: z.array(persistedBoardItemSchema)
+  }),
+  z.object({
+    type: z.literal("move"),
+    before: persistedBoardItemSchema,
+    after: persistedBoardItemSchema
+  })
+]);
+const redoEntrySchema = z.union([
+  z.array(persistedBoardItemSchema),
+  z.array(z.array(persistedBoardItemSchema))
+]);
+type PersistedBoardItem = z.infer<typeof persistedBoardItemSchema>;
+type PersistedRoomAction = z.infer<typeof roomActionSchema>;
+
+function normalizeActionHistory(
+  entries: PersistedRoomAction[] | PersistedBoardItem[] | PersistedBoardItem[][]
+): RoomAction[] {
+  if (entries.length === 0) {
+    return [];
+  }
+
+  if (typeof entries[0] === "object" && entries[0] !== null && "type" in entries[0]) {
+    return entries as PersistedRoomAction[];
+  }
+
+  const legacyEntries = entries as PersistedBoardItem[] | PersistedBoardItem[][];
+  if (Array.isArray(legacyEntries[0])) {
+    return (legacyEntries as PersistedBoardItem[][]).map((items) => ({
+      type: "append",
+      items
+    }));
+  }
+
+  return (legacyEntries as PersistedBoardItem[]).map((item) => ({
+    type: "append",
+    items: [item]
+  }));
+}
 
 const roomRecordSchema = z
   .object({
-  id: z.string().min(1),
-  createdAt: z.number().int().nonnegative(),
-  updatedAt: z.number().int().nonnegative(),
-  expiresAt: z.number().int().nonnegative().nullable(),
-  participants: z.record(z.string(), participantRecordSchema),
+    id: z.string().min(1),
+    createdAt: z.number().int().nonnegative(),
+    updatedAt: z.number().int().nonnegative(),
+    expiresAt: z.number().int().nonnegative().nullable(),
+    participants: z.record(z.string(), participantRecordSchema),
     items: z.array(persistedBoardItemSchema).optional(),
     strokes: z.array(legacyBoardStrokeSchema).optional(),
-    redoByClientId: z.record(z.string(), z.array(persistedBoardItemSchema))
+    undoByClientId: z.record(z.string(), z.array(roomActionSchema)).optional(),
+    redoByClientId: z.record(z.string(), z.union([z.array(roomActionSchema), redoEntrySchema])).optional()
   })
-  .transform((room) => ({
-    id: room.id,
-    createdAt: room.createdAt,
-    updatedAt: room.updatedAt,
-    expiresAt: room.expiresAt,
-    participants: room.participants,
-    items: room.items ?? room.strokes ?? [],
-    redoByClientId: room.redoByClientId
-  }));
+  .transform((room) => {
+    const normalizedUndoByClientId = Object.fromEntries(
+      Object.entries(room.undoByClientId ?? {}).map(([clientId, entries]) => [
+        clientId,
+        normalizeActionHistory(entries)
+      ])
+    ) as RoomRecord["undoByClientId"];
+    const normalizedRedoByClientId = Object.fromEntries(
+      Object.entries(room.redoByClientId ?? {}).map(([clientId, entries]) => [
+        clientId,
+        normalizeActionHistory(entries)
+      ])
+    ) as RoomRecord["redoByClientId"];
+
+    return {
+      id: room.id,
+      createdAt: room.createdAt,
+      updatedAt: room.updatedAt,
+      expiresAt: room.expiresAt,
+      participants: room.participants,
+      items: room.items ?? room.strokes ?? [],
+      undoByClientId: normalizedUndoByClientId,
+      redoByClientId: normalizedRedoByClientId
+    };
+  });
 
 const persistedStateSchema = z.object({
-  version: z.literal(1),
+  version: z.union([z.literal(1), z.literal(2)]),
   rooms: z.array(roomRecordSchema),
   expiredRooms: z.record(z.string(), z.number().int().nonnegative())
 });
@@ -146,7 +205,7 @@ export class FileRoomRepository implements RoomRepository {
   private async persist() {
     const payload = JSON.stringify(
       {
-        version: 1,
+        version: 2,
         rooms: [...this.state.rooms.values()],
         expiredRooms: Object.fromEntries(this.state.expiredRooms)
       },

@@ -5,6 +5,17 @@ export type ParticipantRecord = Participant & {
   lastSeenAt: number;
 };
 
+export type RoomAction =
+  | {
+      type: "append";
+      items: BoardItem[];
+    }
+  | {
+      type: "move";
+      before: BoardItem;
+      after: BoardItem;
+    };
+
 export type RoomRecord = {
   id: string;
   createdAt: number;
@@ -12,7 +23,8 @@ export type RoomRecord = {
   expiresAt: number | null;
   participants: Record<string, ParticipantRecord>;
   items: BoardItem[];
-  redoByClientId: Record<string, BoardItem[]>;
+  undoByClientId: Record<string, RoomAction[]>;
+  redoByClientId: Record<string, RoomAction[]>;
 };
 
 export interface RoomRepository {
