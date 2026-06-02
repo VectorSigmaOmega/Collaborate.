@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
+import type { BoardStroke } from "@collaborate/contracts";
+
 import { InMemoryRoomRepository } from "./inMemoryRoomRepository.js";
 import { RoomService, RoomServiceError } from "./roomService.js";
 
@@ -256,7 +258,7 @@ describe("RoomService", () => {
 
     const snapshot = await roomService.resync("demo-room", "client-1");
     const eraserAttachments = snapshot.items.filter(
-      (item) => item.kind === "stroke" && item.tool === "eraser"
+      (item): item is BoardStroke => item.kind === "stroke" && item.tool === "eraser"
     );
 
     expect(eraserAttachments).toHaveLength(2);
