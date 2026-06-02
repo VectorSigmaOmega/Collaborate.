@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { BoardStroke } from "@collaborate/contracts";
 
 import { InMemoryRoomRepository } from "./inMemoryRoomRepository.js";
+import type { RoomRecord } from "./roomRepository.js";
 import { RoomService, RoomServiceError } from "./roomService.js";
 
 const baseConfig = {
@@ -18,6 +19,15 @@ const baseConfig = {
   ROOM_MAX_PAYLOAD_BYTES: 131_072,
   METRICS_ENABLED: true
 };
+
+class CountingRoomRepository extends InMemoryRoomRepository {
+  saveCount = 0;
+
+  async saveRoom(room: RoomRecord) {
+    this.saveCount += 1;
+    await super.saveRoom(room);
+  }
+}
 
 describe("RoomService", () => {
   let roomService: RoomService;
@@ -160,6 +170,34 @@ describe("RoomService", () => {
     expect(redone.canUndo).toBe(true);
   });
 
+  it("does not persist transient preview items", async () => {
+    const repository = new CountingRoomRepository();
+    const previewRoomService = new RoomService(repository, baseConfig);
+
+    await previewRoomService.joinRoom({
+      roomId: "demo-room",
+      clientId: "client-1",
+      displayName: "Ada",
+      preferredColor: "#111111",
+      socketId: "socket-1"
+    });
+    const savesAfterJoin = repository.saveCount;
+
+    await previewRoomService.previewItem("demo-room", "client-1", {
+      kind: "stroke",
+      id: "preview-1",
+      tool: "pen",
+      color: "#111111",
+      width: 3,
+      points: [
+        { x: 0, y: 0 },
+        { x: 10, y: 10 }
+      ]
+    });
+
+    expect(repository.saveCount).toBe(savesAfterJoin);
+  });
+
   it("commits, moves, undoes, and redoes shape and text items", async () => {
     await roomService.joinRoom({
       roomId: "demo-room",
@@ -244,7 +282,7 @@ describe("RoomService", () => {
       end: { x: 30, y: 20 }
     });
 
-    await roomService.commitItem("demo-room", "client-1", {
+    const eraserCommit = await roomService.commitItem("demo-room", "client-1", {
       kind: "stroke",
       id: "erase-action",
       tool: "eraser",
@@ -255,6 +293,9 @@ describe("RoomService", () => {
         { x: 20, y: 30 }
       ]
     });
+
+    expect(eraserCommit.replaced).toBe(false);
+    expect(eraserCommit.items).toHaveLength(2);
 
     const snapshot = await roomService.resync("demo-room", "client-1");
     const eraserAttachments = snapshot.items.filter(

@@ -6,6 +6,7 @@ import {
   CLIENT_EVENTS,
   SERVER_EVENTS,
   boardItemInputSchema,
+  boardItemPreviewInputSchema,
   boardItemMovePayloadSchema,
   boardCapabilitiesSchema,
   roomErrorSchema,
@@ -187,10 +188,10 @@ export function registerSocketHandlers(
 
     socket.on(
       CLIENT_EVENTS.itemPreview,
-      guardedHandler(CLIENT_EVENTS.itemPreview, boardItemInputSchema, async (payload) => {
+      guardedHandler(CLIENT_EVENTS.itemPreview, boardItemPreviewInputSchema, async (payload) => {
         const { roomId, clientId } = ensureJoined();
         const previewItem = await roomService.previewItem(roomId, clientId, payload);
-        socket.to(roomId).emit(SERVER_EVENTS.itemPreview, previewItem);
+        socket.to(roomId).volatile.emit(SERVER_EVENTS.itemPreview, previewItem);
       })
     );
 
@@ -201,8 +202,10 @@ export function registerSocketHandlers(
         const result = await roomService.commitItem(roomId, clientId, payload);
         if (result.replaced) {
           io.to(roomId).emit(SERVER_EVENTS.boardReplaced, result.items ?? []);
-        } else {
-          socket.to(roomId).emit(SERVER_EVENTS.itemCommitted, result.item!);
+        } else if (result.items?.length) {
+          io.to(roomId).emit(SERVER_EVENTS.itemsCommitted, result.items);
+        } else if (result.item) {
+          socket.to(roomId).emit(SERVER_EVENTS.itemCommitted, result.item);
         }
         socket.emit(SERVER_EVENTS.boardCapabilities, result.capabilities);
       })
@@ -213,7 +216,11 @@ export function registerSocketHandlers(
       guardedHandler(CLIENT_EVENTS.itemMove, boardItemMovePayloadSchema, async (payload) => {
         const { roomId, clientId } = ensureJoined();
         const snapshot = await roomService.moveItem(roomId, clientId, payload);
-        io.to(roomId).emit(SERVER_EVENTS.boardReplaced, snapshot.items);
+        socket.to(roomId).emit(SERVER_EVENTS.itemMoved, payload);
+        socket.emit(SERVER_EVENTS.boardCapabilities, {
+          canUndo: snapshot.canUndo,
+          canRedo: snapshot.canRedo
+        });
       })
     );
 

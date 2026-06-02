@@ -2,6 +2,8 @@ import type {
   BoardCapabilities,
   BoardItem,
   BoardItemInput,
+  BoardItemPreview,
+  BoardItemPreviewInput,
   BoardItemMovePayload,
   BoardSnapshot,
   Participant,
@@ -216,12 +218,11 @@ export class RoomService {
     return this.toSnapshot(room, clientId);
   }
 
-  async previewItem(roomId: string, clientId: string, item: BoardItemInput) {
+  async previewItem(roomId: string, clientId: string, item: BoardItemPreviewInput): Promise<BoardItemPreview> {
     const room = await this.requireAuthorizedRoom(roomId, clientId);
     this.assertItemLimits(item);
     room.participants[clientId].lastSeenAt = Date.now();
-    await this.repository.saveRoom(room);
-    return this.asCommittedItem(clientId, item);
+    return this.asPreviewItem(clientId, item);
   }
 
   async commitItem(roomId: string, clientId: string, item: BoardItemInput): Promise<CommitItemResult> {
@@ -245,17 +246,19 @@ export class RoomService {
         });
       }
 
+      let trimmedItems = false;
       if (room.items.length > this.config.ROOM_MAX_STROKES) {
         room.items = room.items.slice(-this.config.ROOM_MAX_STROKES);
+        trimmedItems = true;
       }
       room.updatedAt = Date.now();
       room.participants[clientId].lastSeenAt = room.updatedAt;
       await this.repository.saveRoom(room);
 
       return {
-        items: room.items,
+        items: trimmedItems ? room.items : eraserAttachments,
         capabilities: this.getCapabilities(room, clientId),
-        replaced: true
+        replaced: trimmedItems
       };
     }
 
@@ -266,8 +269,10 @@ export class RoomService {
       items: [committedItem]
     });
 
+    let trimmedItems = false;
     if (room.items.length > this.config.ROOM_MAX_STROKES) {
       room.items = room.items.slice(-this.config.ROOM_MAX_STROKES);
+      trimmedItems = true;
     }
 
     room.updatedAt = Date.now();
@@ -277,8 +282,9 @@ export class RoomService {
 
     return {
       item: committedItem,
+      items: trimmedItems ? room.items : undefined,
       capabilities: this.getCapabilities(room, clientId),
-      replaced: false
+      replaced: trimmedItems
     };
   }
 
@@ -441,7 +447,14 @@ export class RoomService {
     } as BoardItem;
   }
 
-  private assertItemLimits(item: BoardItemInput) {
+  private asPreviewItem(clientId: string, item: BoardItemPreviewInput): BoardItemPreview {
+    return {
+      ...item,
+      clientId
+    } as BoardItemPreview;
+  }
+
+  private assertItemLimits(item: BoardItemInput | BoardItemPreviewInput) {
     if (item.kind === "stroke" && item.points.length > this.config.ROOM_MAX_STROKE_POINTS) {
       throw new RoomServiceError("INVALID_PAYLOAD", "Stroke exceeds point limit.");
     }

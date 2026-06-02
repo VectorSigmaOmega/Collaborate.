@@ -4,6 +4,7 @@ import {
   translateBoardItem,
   type BoardItem,
   type BoardItemInput,
+  type BoardItemPreviewInput,
   type BoardItemMovePayload,
   type BoardTool,
   type Point,
@@ -41,7 +42,7 @@ type BoardCanvasOptions = {
   activeWidth: number;
   items: BoardItem[];
   previewItems: BoardItem[];
-  onPreviewItem: (item: BoardItemInput) => void;
+  onPreviewItem: (item: BoardItemPreviewInput) => void;
   onCommitItem: (item: BoardItemInput) => void;
   onMoveItem: (payload: BoardItemMovePayload) => void;
   onStartTextDraft: (draft: TextDraft) => void;
@@ -82,6 +83,8 @@ export function useBoardCanvas({
   const draftItemRef = useRef<DraftItem | null>(null);
   const activePointerIdRef = useRef<number | null>(null);
   const previewFlushRef = useRef<number>(0);
+  const previewedStrokePointCountRef = useRef<Map<string, number>>(new Map());
+  const renderFrameRef = useRef<number | null>(null);
   const moveSessionRef = useRef<MoveSession | null>(null);
   const textIntentRef = useRef<TextDraft | null>(null);
   const selectedItemIdRef = useRef<string | null>(null);
@@ -92,7 +95,7 @@ export function useBoardCanvas({
     setSelectedItemIdState(itemId);
   }, []);
 
-  const render = useCallback(() => {
+  const renderNow = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) {
       return;
@@ -123,6 +126,17 @@ export function useBoardCanvas({
     );
   }, [items, previewItems]);
 
+  const requestRender = useCallback(() => {
+    if (renderFrameRef.current !== null) {
+      return;
+    }
+
+    renderFrameRef.current = window.requestAnimationFrame(() => {
+      renderFrameRef.current = null;
+      renderNow();
+    });
+  }, [renderNow]);
+
   const syncCanvasSize = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) {
@@ -141,8 +155,8 @@ export function useBoardCanvas({
     }
 
     context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-    render();
-  }, [render]);
+    renderNow();
+  }, [renderNow]);
 
   useEffect(() => {
     syncCanvasSize();
@@ -151,8 +165,18 @@ export function useBoardCanvas({
   }, [syncCanvasSize]);
 
   useEffect(() => {
-    render();
-  }, [render, selectedItemId]);
+    requestRender();
+  }, [requestRender, selectedItemId]);
+
+  useEffect(
+    () => () => {
+      if (renderFrameRef.current !== null) {
+        window.cancelAnimationFrame(renderFrameRef.current);
+        renderFrameRef.current = null;
+      }
+    },
+    []
+  );
 
   const getPoint = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -228,12 +252,35 @@ export function useBoardCanvas({
     };
   };
 
+  const toPreviewItem = (item: DraftItem): BoardItemPreviewInput | null => {
+    if (item.kind !== "stroke") {
+      return toInputItem(item);
+    }
+
+    const previewedPointCount = previewedStrokePointCountRef.current.get(item.id) ?? 0;
+    const points = item.points.slice(previewedPointCount);
+    if (points.length === 0) {
+      return null;
+    }
+
+    previewedStrokePointCountRef.current.set(item.id, item.points.length);
+    return {
+      kind: "stroke",
+      id: item.id,
+      tool: item.tool,
+      color: item.color,
+      width: item.width,
+      points,
+      append: previewedPointCount > 0
+    };
+  };
+
   const startSelection = (event: ReactPointerEvent<HTMLCanvasElement>, point: Point) => {
     const selectedItem = getSelectedItemAtPoint(point) ?? getItemAtPoint(point);
     setSelectedItemId(selectedItem?.id ?? null);
 
     if (!selectedItem || selectedItem.clientId !== clientId) {
-      render();
+      requestRender();
       return;
     }
 
@@ -244,7 +291,7 @@ export function useBoardCanvas({
       total: { x: 0, y: 0 }
     };
     event.currentTarget.setPointerCapture(event.pointerId);
-    render();
+    requestRender();
   };
 
   const startDrawing = (event: ReactPointerEvent<HTMLCanvasElement>, point: Point) => {
@@ -274,7 +321,7 @@ export function useBoardCanvas({
     }
 
     event.currentTarget.setPointerCapture(event.pointerId);
-    render();
+    requestRender();
   };
 
   const onPointerDown = (event: ReactPointerEvent<HTMLCanvasElement>) => {
@@ -312,7 +359,10 @@ export function useBoardCanvas({
     }
 
     previewFlushRef.current = now;
-    onPreviewItem(toInputItem(draftItem));
+    const previewItem = toPreviewItem(draftItem);
+    if (previewItem) {
+      onPreviewItem(previewItem);
+    }
   };
 
   const onPointerMove = (event: ReactPointerEvent<HTMLCanvasElement>) => {
@@ -331,7 +381,7 @@ export function useBoardCanvas({
         x: point.x - moveSession.start.x,
         y: point.y - moveSession.start.y
       };
-      render();
+      requestRender();
       return;
     }
 
@@ -350,7 +400,7 @@ export function useBoardCanvas({
       draftItem.end = point;
     }
 
-    render();
+    requestRender();
     flushPreview(draftItem);
   };
 
@@ -368,7 +418,7 @@ export function useBoardCanvas({
       onStartTextDraft(textIntent);
       textIntentRef.current = null;
       activePointerIdRef.current = null;
-      render();
+      requestRender();
       return;
     }
 
@@ -383,7 +433,7 @@ export function useBoardCanvas({
 
       moveSessionRef.current = null;
       activePointerIdRef.current = null;
-      render();
+      requestRender();
       return;
     }
 
@@ -398,22 +448,26 @@ export function useBoardCanvas({
         onCommitItem(toInputItem(draftItem));
         setSelectedItemId(isSelectableItem(draftItem) ? draftItem.id : null);
       }
+      previewedStrokePointCountRef.current.delete(draftItem.id);
     }
 
     draftItemRef.current = null;
     activePointerIdRef.current = null;
-    render();
+    requestRender();
   };
 
   const cancelPointer = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     if (activePointerIdRef.current !== event.pointerId) {
       return;
     }
+    if (draftItemRef.current) {
+      previewedStrokePointCountRef.current.delete(draftItemRef.current.id);
+    }
     draftItemRef.current = null;
     moveSessionRef.current = null;
     textIntentRef.current = null;
     activePointerIdRef.current = null;
-    render();
+    requestRender();
   };
 
   const exportPng = () => {

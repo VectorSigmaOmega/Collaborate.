@@ -18,6 +18,8 @@ export const SERVER_EVENTS = {
   roomExpired: "room:expired",
   itemPreview: "board:item_preview",
   itemCommitted: "board:item_committed",
+  itemsCommitted: "board:items_committed",
+  itemMoved: "board:item_moved",
   boardReplaced: "board:replace",
   boardCapabilities: "board:capabilities"
 } as const;

@@ -107,7 +107,7 @@ describe("socket transport", () => {
     expect(item.color).toBe("#111111");
   });
 
-  it("replaces the board when an eraser commit affects multiple items", async () => {
+  it("broadcasts committed eraser attachments without replacing the whole board", async () => {
     const alice = await connectClient();
     const bob = await connectClient();
 
@@ -169,8 +169,8 @@ describe("socket transport", () => {
     });
     await secondCommit;
 
-    const replacedBoard = new Promise<BoardSnapshot["items"]>((resolve) => {
-      bob.once(SERVER_EVENTS.boardReplaced, resolve);
+    const committedItems = new Promise<BoardSnapshot["items"]>((resolve) => {
+      bob.once(SERVER_EVENTS.itemsCommitted, resolve);
     });
 
     alice.emit(CLIENT_EVENTS.itemCommit, {
@@ -185,8 +185,68 @@ describe("socket transport", () => {
       ]
     });
 
-    const items = await replacedBoard;
+    const items = await committedItems;
     expect(items.filter((item) => item.kind === "stroke" && item.tool === "eraser")).toHaveLength(2);
+  });
+
+  it("broadcasts item moves as targeted deltas", async () => {
+    const alice = await connectClient();
+    const bob = await connectClient();
+
+    const aliceSync = new Promise<BoardSnapshot>((resolve) => {
+      alice.once(SERVER_EVENTS.roomSync, resolve);
+    });
+
+    alice.emit(CLIENT_EVENTS.roomJoin, {
+      roomId: "move-room",
+      clientId: "alice-client",
+      displayName: "Alice",
+      preferredColor: "#111111"
+    });
+
+    await aliceSync;
+
+    const bobSync = new Promise<BoardSnapshot>((resolve) => {
+      bob.once(SERVER_EVENTS.roomSync, resolve);
+    });
+
+    bob.emit(CLIENT_EVENTS.roomJoin, {
+      roomId: "move-room",
+      clientId: "bob-client",
+      displayName: "Bob",
+      preferredColor: "#222222"
+    });
+
+    await bobSync;
+
+    const committedItem = new Promise<BoardItem>((resolve) => {
+      bob.once(SERVER_EVENTS.itemCommitted, resolve);
+    });
+
+    alice.emit(CLIENT_EVENTS.itemCommit, {
+      kind: "shape",
+      id: "shape-1",
+      shape: "rectangle",
+      color: "#111111",
+      width: 4,
+      start: { x: 10, y: 10 },
+      end: { x: 40, y: 40 }
+    });
+    await committedItem;
+
+    const itemMoved = new Promise<{ id: string; delta: { x: number; y: number } }>((resolve) => {
+      bob.once(SERVER_EVENTS.itemMoved, resolve);
+    });
+
+    alice.emit(CLIENT_EVENTS.itemMove, {
+      id: "shape-1",
+      delta: { x: 8, y: -3 }
+    });
+
+    await expect(itemMoved).resolves.toEqual({
+      id: "shape-1",
+      delta: { x: 8, y: -3 }
+    });
   });
 
   it("rejects overlong join names as invalid payloads", async () => {

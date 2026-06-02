@@ -40,6 +40,10 @@ export const strokeInputSchema = z.object({
   anchor: pointSchema.optional()
 });
 
+export const strokePreviewInputSchema = strokeInputSchema.extend({
+  append: z.boolean().optional()
+});
+
 export const shapeInputSchema = z.object({
   kind: z.literal("shape"),
   id: z.string().min(1).max(64),
@@ -64,6 +68,12 @@ export const textInputSchema = z.object({
 
 export const boardItemInputSchema = z.discriminatedUnion("kind", [
   strokeInputSchema,
+  shapeInputSchema,
+  textInputSchema
+]);
+
+export const boardItemPreviewInputSchema = z.discriminatedUnion("kind", [
+  strokePreviewInputSchema,
   shapeInputSchema,
   textInputSchema
 ]);
@@ -100,6 +110,10 @@ export const boardStrokeSchema = strokeInputSchema.extend({
   clientId: z.string().min(1).max(64)
 });
 
+export const boardStrokePreviewSchema = strokePreviewInputSchema.extend({
+  clientId: z.string().min(1).max(64)
+});
+
 export const boardShapeSchema = shapeInputSchema.extend({
   clientId: z.string().min(1).max(64)
 });
@@ -110,6 +124,12 @@ export const boardTextSchema = textInputSchema.extend({
 
 export const boardItemSchema = z.discriminatedUnion("kind", [
   boardStrokeSchema,
+  boardShapeSchema,
+  boardTextSchema
+]);
+
+export const boardItemPreviewSchema = z.discriminatedUnion("kind", [
+  boardStrokePreviewSchema,
   boardShapeSchema,
   boardTextSchema
 ]);
@@ -157,13 +177,17 @@ export type StrokeTool = z.infer<typeof strokeToolSchema>;
 export type ShapeTool = z.infer<typeof shapeToolSchema>;
 export type BoardTool = z.infer<typeof boardToolSchema>;
 export type StrokeInput = z.infer<typeof strokeInputSchema>;
+export type StrokePreviewInput = z.infer<typeof strokePreviewInputSchema>;
 export type ShapeInput = z.infer<typeof shapeInputSchema>;
 export type TextInput = z.infer<typeof textInputSchema>;
 export type BoardItemInput = z.infer<typeof boardItemInputSchema>;
+export type BoardItemPreviewInput = z.infer<typeof boardItemPreviewInputSchema>;
 export type BoardStroke = z.infer<typeof boardStrokeSchema>;
+export type BoardStrokePreview = z.infer<typeof boardStrokePreviewSchema>;
 export type BoardShape = z.infer<typeof boardShapeSchema>;
 export type BoardText = z.infer<typeof boardTextSchema>;
 export type BoardItem = z.infer<typeof boardItemSchema>;
+export type BoardItemPreview = z.infer<typeof boardItemPreviewSchema>;
 export type BoardItemMovePayload = z.infer<typeof boardItemMovePayloadSchema>;
 export type Participant = z.infer<typeof participantSchema>;
 export type RoomJoinPayload = z.infer<typeof roomJoinPayloadSchema>;

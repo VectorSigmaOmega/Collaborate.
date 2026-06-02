@@ -8,6 +8,8 @@ import {
   type BoardCapabilities,
   type BoardItem,
   type BoardItemInput,
+  type BoardItemPreview,
+  type BoardItemPreviewInput,
   type BoardItemMovePayload,
   type BoardSnapshot,
   type RoomErrorPayload,
@@ -27,6 +29,51 @@ type RoomSessionState = {
 };
 
 const SOCKET_URL = import.meta.env.VITE_SERVER_URL ?? "http://localhost:5000";
+
+function toPreviewBoardItem(item: BoardItemPreview): BoardItem {
+  if (item.kind !== "stroke") {
+    return item;
+  }
+
+  return {
+    kind: "stroke",
+    id: item.id,
+    actionId: item.actionId,
+    tool: item.tool,
+    color: item.color,
+    width: item.width,
+    points: item.points,
+    maskForItemId: item.maskForItemId,
+    anchor: item.anchor,
+    clientId: item.clientId
+  };
+}
+
+function mergePreviewItem(existing: BoardItem | undefined, item: BoardItemPreview): BoardItem {
+  const nextItem = toPreviewBoardItem(item);
+  if (item.kind !== "stroke" || !item.append || !existing || existing.kind !== "stroke") {
+    return nextItem;
+  }
+
+  return {
+    kind: "stroke",
+    id: item.id,
+    actionId: item.actionId,
+    tool: item.tool,
+    color: item.color,
+    width: item.width,
+    points: [...existing.points, ...item.points],
+    maskForItemId: item.maskForItemId,
+    anchor: item.anchor,
+    clientId: item.clientId
+  };
+}
+
+function appendMissingItems(items: BoardItem[], additions: BoardItem[]) {
+  const existingIds = new Set(items.map((item) => item.id));
+  const missingItems = additions.filter((item) => !existingIds.has(item.id));
+  return missingItems.length > 0 ? [...items, ...missingItems] : items;
+}
 
 export function useRoomSession(roomId: string) {
   const socket = useMemo(
@@ -50,10 +97,27 @@ export function useRoomSession(roomId: string) {
   const joinRequestRef = useRef<JoinPayload | null>(null);
   const manualLeaveRef = useRef(false);
   const previewMapRef = useRef<Map<string, BoardItem>>(new Map());
+  const previewFrameRef = useRef<number | null>(null);
   const [previewItems, setPreviewItems] = useState<BoardItem[]>([]);
 
   useEffect(() => {
     const syncPreviewItems = () => {
+      if (previewFrameRef.current !== null) {
+        return;
+      }
+
+      previewFrameRef.current = window.requestAnimationFrame(() => {
+        previewFrameRef.current = null;
+        setPreviewItems([...previewMapRef.current.values()]);
+      });
+    };
+
+    const syncPreviewItemsNow = () => {
+      if (previewFrameRef.current !== null) {
+        window.cancelAnimationFrame(previewFrameRef.current);
+        previewFrameRef.current = null;
+      }
+
       setPreviewItems([...previewMapRef.current.values()]);
     };
 
@@ -85,7 +149,7 @@ export function useRoomSession(roomId: string) {
 
     socket.on(SERVER_EVENTS.roomSync, (snapshot: BoardSnapshot) => {
       previewMapRef.current.clear();
-      syncPreviewItems();
+      syncPreviewItemsNow();
       setState({
         joined: true,
         joining: false,
@@ -110,16 +174,19 @@ export function useRoomSession(roomId: string) {
       );
     });
 
-    socket.on(SERVER_EVENTS.itemPreview, (item: BoardItem) => {
+    socket.on(SERVER_EVENTS.itemPreview, (item: BoardItemPreview) => {
       if (item.clientId === joinRequestRef.current?.clientId) {
         return;
       }
-      previewMapRef.current.set(item.id, item);
+      previewMapRef.current.set(item.id, mergePreviewItem(previewMapRef.current.get(item.id), item));
       syncPreviewItems();
     });
 
     socket.on(SERVER_EVENTS.itemCommitted, (item: BoardItem) => {
       previewMapRef.current.delete(item.id);
+      if (item.actionId) {
+        previewMapRef.current.delete(item.actionId);
+      }
       setState((current) => {
         if (!current.snapshot || item.clientId === joinRequestRef.current?.clientId) {
           return current;
@@ -141,6 +208,44 @@ export function useRoomSession(roomId: string) {
       syncPreviewItems();
     });
 
+    socket.on(SERVER_EVENTS.itemsCommitted, (items: BoardItem[]) => {
+      for (const item of items) {
+        previewMapRef.current.delete(item.id);
+        if (item.actionId) {
+          previewMapRef.current.delete(item.actionId);
+        }
+      }
+
+      setState((current) =>
+        current.snapshot
+          ? {
+              ...current,
+              snapshot: {
+                ...current.snapshot,
+                items: appendMissingItems(current.snapshot.items, items)
+              }
+            }
+          : current
+      );
+      syncPreviewItems();
+    });
+
+    socket.on(SERVER_EVENTS.itemMoved, (payload: BoardItemMovePayload) => {
+      setState((current) =>
+        current.snapshot
+          ? {
+              ...current,
+              snapshot: {
+                ...current.snapshot,
+                items: current.snapshot.items.map((item) =>
+                  item.id === payload.id ? translateBoardItem(item, payload.delta) : item
+                )
+              }
+            }
+          : current
+      );
+    });
+
     socket.on(SERVER_EVENTS.boardReplaced, (items: BoardItem[]) => {
       previewMapRef.current.clear();
       setState((current) =>
@@ -154,7 +259,7 @@ export function useRoomSession(roomId: string) {
             }
           : current
       );
-      syncPreviewItems();
+      syncPreviewItemsNow();
     });
 
     socket.on(SERVER_EVENTS.boardCapabilities, (capabilities: BoardCapabilities) => {
@@ -176,7 +281,7 @@ export function useRoomSession(roomId: string) {
       const expired = error.code === "ROOM_EXPIRED";
       if (expired) {
         previewMapRef.current.clear();
-        syncPreviewItems();
+        syncPreviewItemsNow();
       }
       setState((current) => ({
         ...current,
@@ -189,6 +294,10 @@ export function useRoomSession(roomId: string) {
     });
 
     return () => {
+      if (previewFrameRef.current !== null) {
+        window.cancelAnimationFrame(previewFrameRef.current);
+        previewFrameRef.current = null;
+      }
       socket.removeAllListeners();
       socket.disconnect();
     };
@@ -239,11 +348,11 @@ export function useRoomSession(roomId: string) {
     socket.emit(CLIENT_EVENTS.roomResync, {});
   };
 
-  const sendPreviewItem = (item: BoardItemInput) => {
+  const sendPreviewItem = (item: BoardItemPreviewInput) => {
     if (!state.joined) {
       return;
     }
-    socket.emit(CLIENT_EVENTS.itemPreview, item);
+    socket.volatile.emit(CLIENT_EVENTS.itemPreview, item);
   };
 
   const commitItem = (item: BoardItemInput) => {
