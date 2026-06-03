@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 
 import {
   translateBoardItem,
@@ -84,6 +84,7 @@ export function useBoardCanvas({
   const activePointerIdRef = useRef<number | null>(null);
   const previewFlushRef = useRef<number>(0);
   const previewedStrokePointCountRef = useRef<Map<string, number>>(new Map());
+  const renderNowRef = useRef<(() => void) | null>(null);
   const renderFrameRef = useRef<number | null>(null);
   const moveSessionRef = useRef<MoveSession | null>(null);
   const textIntentRef = useRef<TextDraft | null>(null);
@@ -126,6 +127,10 @@ export function useBoardCanvas({
     );
   }, [items, previewItems]);
 
+  useLayoutEffect(() => {
+    renderNowRef.current = renderNow;
+  }, [renderNow]);
+
   const requestRender = useCallback(() => {
     if (renderFrameRef.current !== null) {
       return;
@@ -133,9 +138,9 @@ export function useBoardCanvas({
 
     renderFrameRef.current = window.requestAnimationFrame(() => {
       renderFrameRef.current = null;
-      renderNow();
+      renderNowRef.current?.();
     });
-  }, [renderNow]);
+  }, []);
 
   const syncCanvasSize = useCallback(() => {
     const canvas = canvasRef.current;
